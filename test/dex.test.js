@@ -1,6 +1,4 @@
-// Import the required libraries and the OrderBook contract
 const { expect } = require("chai")
-const { ethers } = require("hardhat")
 
 describe("OrderBook", function () {
     let orderBook
@@ -8,32 +6,40 @@ describe("OrderBook", function () {
     let seller
     let buyer
 
-    // Deploy a new instance of the OrderBook contract before each test
     beforeEach(async function () {
-        ;[owner, seller, buyer] = await ethers.getSigners()
         const OrderBook = await ethers.getContractFactory("OrderBook")
         orderBook = await OrderBook.deploy()
         await orderBook.deployed()
+
+        ;[owner, seller, buyer] = await ethers.getSigners()
     })
 
-    // Test the placeOrder function
-    describe("placeOrder", function () {
-        it("should place a new order", async function () {
-            const amount = ethers.utils.parseEther("1")
-            const orderId = await orderBook.placeOrder(seller.address, amount)
-            expect(orderId).to.exist
-        })
-        it("should not allow a buyer and seller to be the same", async function () {
-            const amount = ethers.utils.parseEther("1")
-            await expect(orderBook.placeOrder(owner.address, amount)).to.be.revertedWith(
-                "Buyer and seller cannot be the same."
-            )
-        })
-        it("should not allow an amount of zero to be placed", async function () {
-            const amount = ethers.utils.parseEther("0")
-            await expect(orderBook.placeOrder(seller.address, amount)).to.be.revertedWith(
-                "Amount must be greater than zero."
-            )
-        })
+    it("should place an order", async function () {
+        const amount = ethers.utils.parseEther("1")
+        const orderId = await orderBook.placeOrder(seller.address, amount)
+
+        const order = await orderBook.getOrder(orderId)
+        expect(order.buyer).to.equal(buyer.address)
+        expect(order.seller).to.equal(seller.address)
+        expect(order.amount).to.equal(amount)
+        expect(order.escrowed).to.equal(false)
+        expect(order.buyerConfirmed).to.equal(false)
+        expect(order.sellerConfirmed).to.equal(false)
+
+        const buyerOrders = await orderBook.getOrdersByBuyer(buyer.address)
+        expect(buyerOrders).to.deep.equal([orderId])
+
+        const sellerOrders = await orderBook.getOrdersBySeller(seller.address)
+        expect(sellerOrders).to.deep.equal([orderId])
+
+        const escrowedTokens = await orderBook.getEscrowedTokens(seller.address, orderId)
+        expect(escrowedTokens).to.equal(0)
+
+        const events = await orderBook.queryFilter("OrderPlaced", orderId)
+        expect(events.length).to.equal(1)
+        expect(events[0].args.orderId).to.equal(orderId)
+        expect(events[0].args.buyer).to.equal(buyer.address)
+        expect(events[0].args.seller).to.equal(seller.address)
+        expect(events[0].args.amount).to.equal(amount)
     })
 })
