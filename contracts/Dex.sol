@@ -1,135 +1,392 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
 /**
- * @title OrderBook
- * @dev A smart contract for managing an order book with an escrow.
- */
-contract OrderBook {
-    // Struct representing an order
-    struct Order {
-        address payable buyer; // Address of the buyer
-        address payable seller; // Address of the seller
-        uint256 amount; // Amount of tokens being sold
-        bool escrowed; // Whether tokens have been locked in escrow
-        bool buyerConfirmed; // Whether the buyer has confirmed receipt of tokens
-        bool sellerConfirmed; // Whether the seller has confirmed receipt of payment
-    }
+ *Contract to provide escrow services for transactions where transacting parties
+ * may not know/trust each other.
+ * How it works:
+ * 1. 
+ * 2. The buyer sends Ether to this escrow contract
+ * 3. The seller releases the agreed product/service upon getting notified by this cotract that
+ * the buyer has released the purchase price.
+ * 4. The buyer confirms reciept of the product/service and releases funds held in this contract.
+ * 5. The seller recieves the released funds
+ * 6. Incase of a dispute arises (Should be before the buyer releases funds in 5) the buyer and seller identify an arbiter(escrow) to help in resolving a conflict incase
+ * the conflict is to be escaleted to another party.
+ * 7. The arbiter deternines who is in the wrong and either refunds the buyer or releases the funds to the seller.
+ * 8. The transaction is considered closed.
+*/
 
-    mapping(uint256 => Order) private orders; // Mapping of order IDs to orders
-    mapping(address => uint256[]) private ordersByBuyer; // Mapping of buyer addresses to their order IDs
-    mapping(address => uint256[]) private ordersBySeller; // Mapping of seller addresses to their order IDs
-    mapping(address => mapping(uint256 => uint256)) private escrowedTokensBySeller; // Mapping of seller addresses and order IDs to the amount of tokens escrowed
+pragma solidity ^0.7.2;
 
-    // Events
-    event OrderPlaced(
-        uint256 indexed orderId,
-        address indexed buyer,
-        address indexed seller,
-        uint256 amount
-    );
-    event PaymentConfirmed(uint256 indexed orderId, address indexed buyer, address indexed seller);
-    event ReceiptConfirmed(uint256 indexed orderId, address indexed buyer, address indexed seller);
 
-    // Place an order
-    function placeOrder(address payable _seller, uint256 _amount) public returns (uint256) {
-        require(_seller != msg.sender, "Buyer and seller cannot be the same.");
-        require(_amount > 0, "Amount must be greater than zero.");
-        uint256 orderId = uint256(
-            keccak256(abi.encodePacked(msg.sender, _seller, _amount, block.timestamp))
-        ); // Generate a unique order ID
-        Order storage order = orders[orderId];
-        order.buyer = payable(msg.sender);
-        order.seller = _seller;
-        order.amount = _amount;
-        order.escrowed = false;
-        order.buyerConfirmed = false;
-        order.sellerConfirmed = false;
-        ordersByBuyer[msg.sender].push(orderId);
-        ordersBySeller[_seller].push(orderId);
-        emit OrderPlaced(orderId, msg.sender, _seller, _amount);
-        return orderId;
-    }
+contract EscrowService  {
+        //Version:  v1.0
+        
+        address public admin;
 
-    // Confirm payment from buyer
-    function confirmPayment(uint256 _orderId) public payable {
-        Order storage order = orders[_orderId];
-        require(order.buyer == msg.sender, "Only buyer can confirm payment.");
-        require(!order.escrowed, "Tokens already escrowed.");
-        require(msg.value == order.amount, "Incorrect amount sent.");
-        escrowedTokensBySeller[order.seller][_orderId] = order.amount; // Lock tokens in escrow
-        order.escrowed = true;
-        emit PaymentConfirmed(_orderId, msg.sender, order.seller);
-    }
+        
+        //Each buyer address consist of an array of EscrowStruct
+        //Used to store buyer's transactions and for buyers to interact with his transactions. (Such as releasing funds to seller)
+        struct EscrowStruct
+        {    
+            address buyer;          //Person who is making payment
+            address seller;         //Person who will receive funds
+            address escrow_agent;   //Escrow agent to resolve disputes, if any
+                                       
+            uint escrow_fee;        //Fee charged by escrow
+            uint amount;            //Amount of Ether (in Wei) seller will receive after fees
 
-    // Confirm receipt of tokens by buyer
-    function confirmReceipt(uint256 _orderId) public {
-        Order storage order = orders[_orderId];
-        require(order.buyer == msg.sender, "Only buyer can confirm receipt.");
-        require(!order.buyerConfirmed, "Buyer already confirmed receipt.");
-        require(order.escrowed, "Tokens not yet escrowed.");
-        require(!order.sellerConfirmed, "Seller has not yet confirmed receipt of payment.");
-        order.buyerConfirmed = true;
-        if (order.buyerConfirmed && order.sellerConfirmed) {
-            escrowedTokensBySeller[order.seller][_orderId] = 0; // Reset amount of tokens in escrow
-            order.buyer.transfer(escrowedTokensBySeller[order.seller][_orderId]); // Transfer tokens from escrow to buyer
-            emit ReceiptConfirmed(_orderId, msg.sender, order.seller);
+            bool escrow_intervention; //Buyer or Seller can call for Escrow intervention
+            bool release_approval;   //Buyer or Escrow(if escrow_intervention is true) can approve release of funds to seller
+            bool refund_approval;    //Seller or Escrow(if escrow_intervention is true) can approve refund of funds to buyer 
+
+            bytes32 notes;             //Notes for Seller
+            
         }
-    }
 
-    // Confirm receipt of payment by seller
-    function confirmPaymentReceipt(uint256 _orderId) public {
-        Order storage order = orders[_orderId];
-        require(order.seller == msg.sender, "Only seller can confirm payment receipt.");
-        require(order.escrowed, "Tokens not yet escrowed.");
-        require(!order.sellerConfirmed, "Seller already confirmed payment receipt.");
-        order.sellerConfirmed = true;
-        if (order.buyerConfirmed && order.sellerConfirmed) {
-            escrowedTokensBySeller[order.seller][_orderId] = 0; // Reset amount of tokens in escrow
-            order.seller.transfer(order.amount); // Transfer payment to seller
-            emit ReceiptConfirmed(_orderId, order.buyer, msg.sender);
+        struct TransactionStruct
+        {                        
+            //Links to transaction from buyer
+            address buyer;          //Person who is making payment
+            uint buyer_nounce;         //Nounce of buyer transaction                            
         }
+
+
+        
+        //Database of Buyers. Each buyer then contain an array of his transactions
+        mapping(address => EscrowStruct[]) public buyerDatabase;
+
+        //Database of Seller and Escrow Agent
+        mapping(address => TransactionStruct[]) public sellerDatabase;       
+        mapping(address => TransactionStruct[]) public escrowDatabase;
+               
+        //Every address have a Funds bank. All refunds, sales and escrow comissions are sent to this bank. Address owner can withdraw them at any time.
+        mapping(address => uint) public Funds;
+
+        mapping(address => uint) public escrowFee;
+
+
+        //Constructor. Set contract creator/admin
+        constructor() {
+            admin = msg.sender;
+        }
+
+        function fundAccount(address sender_)  external payable
+        {
+            //LogFundsReceived(msg.sender, msg.value);
+            // Add funds to the sender's account
+            Funds[sender_] += msg.value;   
+            
+        }
+
+        function setEscrowFee(uint fee) external{
+
+            //Allowed fee range: 0.1% to 10%, in increments of 0.1%
+            require (fee >= 1 && fee <= 100);
+            escrowFee[msg.sender] = fee;
+        }
+
+        function getEscrowFee(address escrowAddress) internal view returns (uint) {
+            return (escrowFee[escrowAddress]);
+        }
+
+        
+        function newEscrowTransaction(address sellerAddress, address escrowAddress, bytes32 notes) public payable returns (bool) {
+
+            require(msg.value > 0 && msg.sender != escrowAddress);
+        
+            //Store escrow details in memory
+            EscrowStruct memory currentEscrow;
+            TransactionStruct memory currentTransaction;
+            
+            currentEscrow.buyer = msg.sender;
+            currentEscrow.seller = sellerAddress;
+            currentEscrow.escrow_agent = escrowAddress;
+
+            //Calculates and stores Escrow Fee.
+            currentEscrow.escrow_fee = getEscrowFee(escrowAddress)*msg.value/1000;
+            
+            //0.25% dev fee
+            uint dev_fee = msg.value/400;
+            Funds[admin] += dev_fee;   
+
+            //Amount seller receives = Total amount - 0.25% dev fee - Escrow Fee
+            currentEscrow.amount = msg.value - dev_fee - currentEscrow.escrow_fee;
+
+            //These default to false, no need to set them again
+            /*currentEscrow.escrow_intervention = false;
+            currentEscrow.release_approval = false;
+            currentEscrow.refund_approval = false;  */ 
+            
+            currentEscrow.notes = notes;
+ 
+            //Links this transaction to Seller and Escrow's list of transactions.
+            currentTransaction.buyer = msg.sender;
+            currentTransaction.buyer_nounce = buyerDatabase[msg.sender].length;
+
+            sellerDatabase[sellerAddress].push(currentTransaction);
+            escrowDatabase[escrowAddress].push(currentTransaction);
+            buyerDatabase[msg.sender].push(currentEscrow);
+            
+            return true;
+
+        }
+
+        //switcher 0 for Buyer, 1 for Seller, 2 for Escrow
+        function getNumTransactions(address inputAddress, uint switcher) external view returns (uint)
+        {
+
+            if (switcher == 0) return (buyerDatabase[inputAddress].length);
+
+            else if (switcher == 1) return (sellerDatabase[inputAddress].length);
+
+            else return (escrowDatabase[inputAddress].length);
+        }
+
+        //switcher 0 for Buyer, 1 for Seller, 2 for Escrow
+        function getSpecificTransaction(address inputAddress, uint switcher, uint ID) external returns (address, address, address, uint, bytes32, uint, bytes32)
+
+        {
+            bytes32 status;
+            EscrowStruct memory currentEscrow;
+            if (switcher == 0)
+            {
+                currentEscrow = buyerDatabase[inputAddress][ID];
+                status = checkStatus(inputAddress, ID);
+            } 
+            
+            else if (switcher == 1)
+
+            {  
+                currentEscrow = buyerDatabase[sellerDatabase[inputAddress][ID].buyer][sellerDatabase[inputAddress][ID].buyer_nounce];
+                status = checkStatus(currentEscrow.buyer, sellerDatabase[inputAddress][ID].buyer_nounce);
+            }
+
+                        
+            else if (switcher == 2)
+            
+            {        
+                currentEscrow = buyerDatabase[escrowDatabase[inputAddress][ID].buyer][escrowDatabase[inputAddress][ID].buyer_nounce];
+                status = checkStatus(currentEscrow.buyer, escrowDatabase[inputAddress][ID].buyer_nounce);
+            }
+
+            return (currentEscrow.buyer, currentEscrow.seller, currentEscrow.escrow_agent, currentEscrow.amount, status, currentEscrow.escrow_fee, currentEscrow.notes);
+        }   
+
+
+        function buyerHistory(address buyerAddress, uint startID, uint numToLoad) external returns (address[] memory, address[] memory,uint[] memory, bytes32[] memory){
+
+
+            uint length;
+            if (buyerDatabase[buyerAddress].length < numToLoad)
+                length = buyerDatabase[buyerAddress].length;
+            
+            else 
+                length = numToLoad;
+            
+            address[] memory sellers = new address[](length);
+            address[] memory escrow_agents = new address[](length);
+            uint[] memory amounts = new uint[](length);
+            bytes32[] memory statuses = new bytes32[](length);
+           
+            for (uint i = 0; i < length; i++)
+            {
+  
+                sellers[i] = (buyerDatabase[buyerAddress][startID + i].seller);
+                escrow_agents[i] = (buyerDatabase[buyerAddress][startID + i].escrow_agent);
+                amounts[i] = (buyerDatabase[buyerAddress][startID + i].amount);
+                statuses[i] = checkStatus(buyerAddress, startID + i);
+            }
+            
+            return (sellers, escrow_agents, amounts, statuses);
+        }
+
+
+                 
+        function SellerHistory(address inputAddress, uint startID , uint numToLoad) external returns (address[] memory, address[] memory, uint[] memory, bytes32[] memory){
+
+            address[] memory buyers = new address[](numToLoad);
+            address[] memory escrows = new address[](numToLoad);
+            uint[] memory amounts = new uint[](numToLoad);
+            bytes32[] memory statuses = new bytes32[](numToLoad);
+
+            for (uint i = 0; i < numToLoad; i++)
+            {
+                if (i >= sellerDatabase[inputAddress].length)
+                    break;
+                buyers[i] = sellerDatabase[inputAddress][startID + i].buyer;
+                escrows[i] = buyerDatabase[buyers[i]][sellerDatabase[inputAddress][startID +i].buyer_nounce].escrow_agent;
+                amounts[i] = buyerDatabase[buyers[i]][sellerDatabase[inputAddress][startID + i].buyer_nounce].amount;
+                statuses[i] = checkStatus(buyers[i], sellerDatabase[inputAddress][startID + i].buyer_nounce);
+            }
+            return (buyers, escrows, amounts, statuses);
+        }
+
+        function escrowHistory(address inputAddress, uint startID, uint numToLoad) external returns (address[] memory, address[] memory, uint[] memory, bytes32[] memory){
+        
+            address[] memory buyers = new address[](numToLoad);
+            address[] memory sellers = new address[](numToLoad);
+            uint[] memory amounts = new uint[](numToLoad);
+            bytes32[] memory statuses = new bytes32[](numToLoad);
+
+            for (uint i = 0; i < numToLoad; i++)
+            {
+                if (i >= escrowDatabase[inputAddress].length)
+                    break;
+                buyers[i] = escrowDatabase[inputAddress][startID + i].buyer;
+                sellers[i] = buyerDatabase[buyers[i]][escrowDatabase[inputAddress][startID +i].buyer_nounce].seller;
+                amounts[i] = buyerDatabase[buyers[i]][escrowDatabase[inputAddress][startID + i].buyer_nounce].amount;
+                statuses[i] = checkStatus(buyers[i], escrowDatabase[inputAddress][startID + i].buyer_nounce);
+            }
+            return (buyers, sellers, amounts, statuses);
     }
 
-    // Get order details by order ID
-    function getOrder(
-        uint256 _orderId
-    )
-        public
-        view
-        returns (
-            address payable buyer,
-            address seller,
-            uint256 amount,
-            bool escrowed,
-            bool buyerConfirmed,
-            bool sellerConfirmed
-        )
-    {
-        Order storage order = orders[_orderId];
-        return (
-            order.buyer,
-            order.seller,
-            order.amount,
-            order.escrowed,
-            order.buyerConfirmed,
-            order.sellerConfirmed
-        );
-    }
+        function checkStatus(address buyerAddress, uint nounce) internal returns (bytes32){
 
-    // Get order IDs by buyer address
-    function getOrdersByBuyer(address _buyer) public view returns (uint256[] memory) {
-        return ordersByBuyer[_buyer];
-    }
+            bytes32 status = "";
 
-    // Get order IDs by seller address
-    function getOrdersBySeller(address _seller) public view returns (uint256[] memory) {
-        return ordersBySeller[_seller];
-    }
+            if (buyerDatabase[buyerAddress][nounce].release_approval){
+                status = "Complete";
+            } else if (buyerDatabase[buyerAddress][nounce].refund_approval){
+                status = "Refunded";
+            } else if (buyerDatabase[buyerAddress][nounce].escrow_intervention){
+                status = "Pending Escrow Decision";
+            } else
+            {
+                status = "In Progress";
+            }
+       
+            return (status);
+        }
 
-    // Get amount of escrowed tokens for an order
-    function getEscrowedTokens(uint256 _orderId) public view returns (uint256) {
-        Order storage order = orders[_orderId];
-        return escrowedTokensBySeller[order.seller][_orderId];
+        
+        //When transaction is complete, buyer will release funds to seller
+        //Even if EscrowEscalation is raised, buyer can still approve fund release at any time
+        function buyerFundRelease(uint ID) public
+        {
+            require(ID < buyerDatabase[msg.sender].length && 
+            buyerDatabase[msg.sender][ID].release_approval == false &&
+            buyerDatabase[msg.sender][ID].refund_approval == false, 'Invalid request');
+            
+            //Set release approval to true. Ensure approval for each transaction can only be called once.
+            buyerDatabase[msg.sender][ID].release_approval = true;
+
+            address seller = buyerDatabase[msg.sender][ID].seller;
+            address escrow_agent = buyerDatabase[msg.sender][ID].escrow_agent;
+
+            uint amount = buyerDatabase[msg.sender][ID].amount;
+            uint escrow_fee = buyerDatabase[msg.sender][ID].escrow_fee;
+
+            //Move funds under seller's owership
+            Funds[seller] += amount;
+            Funds[escrow_agent] += escrow_fee;
+
+
+        }
+
+        //Seller can refund the buyer at any time
+        function sellerRefund(uint ID) public
+        {
+            address buyerAddress = sellerDatabase[msg.sender][ID].buyer;
+            uint buyerID = sellerDatabase[msg.sender][ID].buyer_nounce;
+
+            require(
+            buyerDatabase[buyerAddress][buyerID].release_approval == false &&
+            buyerDatabase[buyerAddress][buyerID].refund_approval == false); 
+
+            address escrow_agent = buyerDatabase[buyerAddress][buyerID].escrow_agent;
+            uint escrow_fee = buyerDatabase[buyerAddress][buyerID].escrow_fee;
+            uint amount = buyerDatabase[buyerAddress][buyerID].amount;
+        
+            //Once approved, buyer can invoke WithdrawFunds to claim his refund
+            buyerDatabase[buyerAddress][buyerID].refund_approval = true;
+
+            Funds[buyerAddress] += amount;
+            Funds[escrow_agent] += escrow_fee;
+            
+        }
+        
+        
+
+        //Either buyer or seller can raise escalation with escrow agent. 
+        //Once escalation is activated, escrow agent can release funds to seller OR make a full refund to buyer
+
+        //Switcher = 0 for Buyer, Switcher = 1 for Seller
+        function EscrowEscalation(uint switcher, uint ID) external
+        {
+            //To activate EscrowEscalation
+            //1) Buyer must not have approved fund release.
+            //2) Seller must not have approved a refund.
+            //3) EscrowEscalation is being activated for the first time
+
+            //There is no difference whether the buyer or seller activates EscrowEscalation.
+            address buyerAddress;
+            uint buyerID; //transaction ID of in buyer's history
+            if (switcher == 0) // Buyer
+            {
+                buyerAddress = msg.sender;
+                buyerID = ID;
+            } else if (switcher == 1) //Seller
+            {
+                buyerAddress = sellerDatabase[msg.sender][ID].buyer;
+                buyerID = sellerDatabase[msg.sender][ID].buyer_nounce;
+            }
+
+            require(buyerDatabase[buyerAddress][buyerID].escrow_intervention == false  &&
+            buyerDatabase[buyerAddress][buyerID].release_approval == false &&
+            buyerDatabase[buyerAddress][buyerID].refund_approval == false);
+
+            //Activate the ability for Escrow Agent to intervent in this transaction
+            buyerDatabase[buyerAddress][buyerID].escrow_intervention = true;
+
+            
+        }
+        
+        //ID is the transaction ID from Escrow's history. 
+        //Decision = 0 is for refunding Buyer. Decision = 1 is for releasing funds to Seller
+        function escrowDecision(uint ID, uint Decision) public
+        {
+            //Escrow can only make the decision IF
+            //1) Buyer has not yet approved fund release to seller
+            //2) Seller has not yet approved a refund to buyer
+            //3) Escrow Agent has not yet approved fund release to seller AND not approved refund to buyer
+            //4) Escalation Escalation is activated
+
+            address buyerAddress = escrowDatabase[msg.sender][ID].buyer;
+            uint buyerID = escrowDatabase[msg.sender][ID].buyer_nounce;
+            
+
+            require(
+            buyerDatabase[buyerAddress][buyerID].release_approval == false &&
+            buyerDatabase[buyerAddress][buyerID].escrow_intervention == true &&
+            buyerDatabase[buyerAddress][buyerID].refund_approval == false);
+            
+            uint escrow_fee = buyerDatabase[buyerAddress][buyerID].escrow_fee;
+            uint amount = buyerDatabase[buyerAddress][buyerID].amount;
+
+            if (Decision == 0) //Refund Buyer
+            {
+                buyerDatabase[buyerAddress][buyerID].refund_approval = true;    
+                Funds[buyerAddress] += amount;
+                Funds[msg.sender] += escrow_fee;
+                
+            } else if (Decision == 1) //Release funds to Seller
+            {                
+                buyerDatabase[buyerAddress][buyerID].release_approval = true;
+                Funds[buyerDatabase[buyerAddress][buyerID].seller] += amount;
+                Funds[msg.sender] += escrow_fee;
+            }  
+        }
+        
+        function WithdrawFunds() public
+        {
+            uint amount = Funds[msg.sender];
+            Funds[msg.sender] = 0;
+            if (!msg.sender.send(amount))
+                Funds[msg.sender] = amount;
+        }
+
+
+        function CheckBalance(address fromAddress) public returns (uint){
+            return (Funds[fromAddress]);
+        }
+     
     }
-}
