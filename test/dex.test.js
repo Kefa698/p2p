@@ -1,45 +1,43 @@
 const { expect } = require("chai")
+const { ethers } = require("hardhat")
 
+// Start the test suite
 describe("OrderBook", function () {
-    let orderBook
-    let owner
-    let seller
-    let buyer
-
+    let orderBook, admin, seller, escrow
     beforeEach(async function () {
+        // Deploy the contract and assign the admin
+        ;[admin, seller, escrow] = await ethers.getSigners()
         const OrderBook = await ethers.getContractFactory("OrderBook")
         orderBook = await OrderBook.deploy()
         await orderBook.deployed()
-
-        ;[owner, seller, buyer] = await ethers.getSigners()
     })
 
-    it("should place an order", async function () {
-        const amount = ethers.utils.parseEther("1")
-        const orderId = await orderBook.placeOrder(seller.address, amount)
+    // Test the fundAccount function
+    describe("fundAccount", function () {
+        it("should add funds to the sender's account", async function () {
+            const sender = admin.address
+            const amount = ethers.utils.parseEther("1")
+            const initialFunds = await orderBook.Funds(sender)
+            await orderBook.fundAccount(sender, { value: amount })
+            const newFunds = await orderBook.Funds(sender)
+            expect(newFunds).to.equal(initialFunds.add(amount))
+        })
+    })
 
-        const order = await orderBook.getOrder(orderId)
-        expect(order.buyer).to.equal(buyer.address)
-        expect(order.seller).to.equal(seller.address)
-        expect(order.amount).to.equal(amount)
-        expect(order.escrowed).to.equal(false)
-        expect(order.buyerConfirmed).to.equal(false)
-        expect(order.sellerConfirmed).to.equal(false)
+    // Test the setEscrowFee function
+    describe("setEscrowFee", function () {
+        it("should set the escrow fee for the sender", async function () {
+            const fee = 50
+            await orderBook.setEscrowFee(fee)
+            const sender = admin.address
+            const expectedFee = fee
+            const actualFee = await orderBook.escrowFee(sender)
+            expect(actualFee).to.equal(expectedFee)
+        })
 
-        const buyerOrders = await orderBook.getOrdersByBuyer(buyer.address)
-        expect(buyerOrders).to.deep.equal([orderId])
-
-        const sellerOrders = await orderBook.getOrdersBySeller(seller.address)
-        expect(sellerOrders).to.deep.equal([orderId])
-
-        const escrowedTokens = await orderBook.getEscrowedTokens(seller.address, orderId)
-        expect(escrowedTokens).to.equal(0)
-
-        const events = await orderBook.queryFilter("OrderPlaced", orderId)
-        expect(events.length).to.equal(1)
-        expect(events[0].args.orderId).to.equal(orderId)
-        expect(events[0].args.buyer).to.equal(buyer.address)
-        expect(events[0].args.seller).to.equal(seller.address)
-        expect(events[0].args.amount).to.equal(amount)
+        it("should revert if the fee is outside the allowed range", async function () {
+            const fee = 200
+            await expect(orderBook.setEscrowFee(fee)).to.be.revertedWith("revert")
+        })
     })
 })
