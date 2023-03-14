@@ -103,17 +103,16 @@ describe("OrderBook", function () {
             await orderBook
                 .connect(buyer)
                 .newEscrowTransaction(seller.address, escrow.address, notes, {
-                    value: ethers.utils.parseEther("1"),
+                    value: ethers.utils.parseEther("5"),
                 })
             // Check the number of transactions for the seller
             const numBuyerTransactions = await orderBook.getNumTransactions(seller.address, 1)
             expect(numBuyerTransactions).to.equal(1)
             transactionId = (await orderBook.getNumTransactions(buyer.address, 0)).toNumber() - 1
 
-            //await expect(orderBook.buyerFundRelease(transactionId)).to.be.reverted
-            // await orderBook.buyerFundRelease(transactionId)
-            await orderBook.buyerDatabase[buyer.address], [transactionId].release_approval.to
-                .true
+            const sellerBalance = await ethers.provider.getBalance(seller.address)
+
+            expect(sellerBalance).to.equal("10000000000000000000000")
         })
     })
 })
