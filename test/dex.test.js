@@ -96,7 +96,6 @@ describe("OrderBook", function () {
     })
     describe("release funds to the seller", function () {
         it("should release funds", async function () {
-            const value = ethers.utils.parseEther("1")
             const notes = ethers.utils.formatBytes32String("Test notes")
 
             // Make the transaction from the buyer to the contract
