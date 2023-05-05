@@ -249,7 +249,7 @@ contract OrderBook {
         }
         return (buyers, sellers, amounts, statuses);
     }
-
+//function to checkstatus
     function checkStatus(address buyerAddress, uint nounce) internal view returns (bytes32) {
         bytes32 status = "";
 
