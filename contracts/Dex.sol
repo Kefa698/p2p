@@ -122,7 +122,7 @@ contract OrderBook {
 
         return true;
     }
-
+//function to get number of transactions of an address
     //switcher 0 for Buyer, 1 for Seller, 2 for Escrow
     function getNumTransactions(address inputAddress, uint switcher) external view returns (uint) {
         if (switcher == 0) return (buyerDatabase[inputAddress].length);
