@@ -51,9 +51,10 @@ contract OrderBook {
     mapping(address => TransactionStruct[]) public sellerDatabase;
     mapping(address => TransactionStruct[]) public escrowDatabase;
 
-    //Every address have a Funds bank. All refunds, sales and escrow comissions are sent to this bank. Address owner can withdraw them at any time.
+    //Every address have a Funds bank. All refunds, sales and escrow comissions are sent to this bank. 
+    //Address owner can withdraw them at any time.
     mapping(address => uint) public Funds;
-
+//associated each addreas with escrow fee percentage
     mapping(address => uint) public escrowFee;
 
     //Constructor. Set contract creator/admin
