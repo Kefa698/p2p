@@ -194,6 +194,7 @@ contract OrderBook {
 
         return (sellers, escrow_agents, amounts, statuses);
     }
+
 //seller history
     function SellerHistory(
         address inputAddress,
@@ -221,7 +222,7 @@ contract OrderBook {
         }
         return (buyers, escrows, amounts, statuses);
     }
-
+//escrow History
     function escrowHistory(
         address inputAddress,
         uint startID,
