@@ -47,14 +47,16 @@ contract OrderBook {
     //Database of Buyers. Each buyer then contain an array of his transactions
     mapping(address => EscrowStruct[]) public buyerDatabase;
 
-    //Database of Seller and Escrow Agent
+    //Database of Seller 
     mapping(address => TransactionStruct[]) public sellerDatabase;
+    //Database of Escrow Agent
     mapping(address => TransactionStruct[]) public escrowDatabase;
 
     //Every address have a Funds bank. All refunds, sales and escrow comissions are sent to this bank. 
     //Address owner can withdraw them at any time.
-    mapping(address => uint) public Funds;
-//associated each addreas with escrow fee percentage
+    //mapping of address to balance of funds
+    mapping(address => uint) public Funds;    
+// mapping of each addreas with escrow fee percentage
     mapping(address => uint) public escrowFee;
 
     //Constructor. Set contract creator/admin
@@ -73,7 +75,7 @@ contract OrderBook {
         require(fee >= 1 && fee <= 100);
         escrowFee[msg.sender] = fee;
     }
-
+//get escrow fee for a given escrowAdress
     function getEscrowFee(address escrowAddress) internal view returns (uint) {
         return (escrowFee[escrowAddress]);
     }
