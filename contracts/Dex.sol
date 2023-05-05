@@ -169,7 +169,7 @@ contract OrderBook {
             currentEscrow.notes
         );
     }
-
+//buyer history
     function buyerHistory(
         address buyerAddress,
         uint startID,
