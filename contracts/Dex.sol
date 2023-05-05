@@ -3,8 +3,8 @@
  *Contract to provide escrow services for transactions where transacting parties
  * may not know/trust each other.
  * How it works:
- * 1.
- * 2. The buyer sends Ether to this escrow contract
+ * 1. Buy order
+ * 2. The buyer sends Ether to this escrow contract. 
  * 3. The seller releases the agreed product/service upon getting notified by this cotract that
  * the buyer has released the purchase price.
  * 4. The buyer confirms reciept of the product/service and releases funds held in this contract.
@@ -24,12 +24,13 @@ contract OrderBook {
 
     //Each buyer address consist of an array of EscrowStruct
     //Used to store buyer's transactions and for buyers to interact with his transactions. (Such as releasing funds to seller)
+    //properties of transaction held in escrow
     struct EscrowStruct {
         address buyer; //Person who is making payment
         address seller; //Person who will receive funds
         address escrow_agent; //Escrow agent to resolve disputes, if any
         uint escrow_fee; //Fee charged by escrow
-        uint amount; //Amount of Ether (in Wei) seller will receive after fees
+        uint amount; // questionable Amount of Ether (in Wei) seller will receive after fees
         bool escrow_intervention; //Buyer or Seller can call for Escrow intervention
         bool release_approval; //Buyer or Escrow(if escrow_intervention is true) can approve release of funds to seller
         bool refund_approval; //Seller or Escrow(if escrow_intervention is true) can approve refund of funds to buyer
@@ -40,6 +41,7 @@ contract OrderBook {
         //Links to transaction from buyer
         address buyer; //Person who is making payment
         uint buyer_nounce; //Nounce of buyer transaction
+        
     }
 
     //Database of Buyers. Each buyer then contain an array of his transactions
@@ -74,7 +76,7 @@ contract OrderBook {
     function getEscrowFee(address escrowAddress) internal view returns (uint) {
         return (escrowFee[escrowAddress]);
     }
-
+//why no buyer address?
     function newEscrowTransaction(
         address sellerAddress,
         address escrowAddress,
